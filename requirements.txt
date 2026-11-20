@@ -1,0 +1,15 @@
+# 界面
+PySide6>=6.6
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch>=2.2
+torchaudio>=2.2
+huggingface_hub>=0.23
+dettato @ git+https://github.com/kobimusic/dettato
+muscriptor>=0.4
+
+# 音频处理与合成
+numpy>=1.24
+soundfile>=0.12
+tinysoundfont>=0.3.7
+mido>=1.3
+pedalboard
