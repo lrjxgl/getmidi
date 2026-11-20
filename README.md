@@ -28,7 +28,8 @@
 # 创建并激活环境（已存在 py310 可跳过）
 conda create -n py310 python=3.10 -y
 conda activate py310
-
+git clone https://github.com/lrjxgl/getmidi
+cd getmidi
 # 安装依赖（requirements.txt 已包含 PyTorch CUDA 源）
 pip install -r requirements.txt
 ```
@@ -109,7 +110,7 @@ getmidi/
 │  │  └─ worker.py         # 转录线程
 │  └─ ui/                  # 主窗口、钢琴卷、音轨面板、设置与对话框
 ├─ models/                 # 模型权重与默认音色库
-├─ html/                   # 推广主页与 getmidi.zip
+├─ html/                   # 推广主页
 ├─ requirements.txt
 ├─ run.bat
 └─ README.md
