@@ -4,7 +4,6 @@
 
 界面基于 PySide6，转录使用 [Dettato](https://github.com/kobimusic/dettato)（默认）或 MuScriptor，播放与渲染由内置 SoundFont 合成器完成，不需要安装 FluidSynth 等外部程序。
 
-> 产品介绍页：[html/index.html](html/index.html)
 
 ## 功能
 
