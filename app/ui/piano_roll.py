@@ -8,12 +8,16 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QAbstractScrollArea, QFrame, QWidget
 
 from ..core.audio_utils import human_time
-from ..core.transcription import Transcription, note_name
+from ..core.transcription import Note, Transcription, note_name
 
 KEY_W = 62
 RULER_H = 24
 MIN_NOTE_H = 4
 MAX_NOTE_H = 22
+
+SNAP = 0.125
+EDGE_PX = 7
+MIN_NOTE_LEN = SNAP
 
 _BLACK_KEYS = {1, 3, 6, 8, 10}
 
@@ -21,6 +25,8 @@ _BLACK_KEYS = {1, 3, 6, 8, 10}
 class PianoRoll(QAbstractScrollArea):
     seekRequested = Signal(float)
     playToggleRequested = Signal()
+    notesEdited = Signal()
+    activeTrackChanged = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,6 +50,11 @@ class PianoRoll(QAbstractScrollArea):
         self._active_track: int | None = None
         self._seeking = False
 
+        self._selection: tuple[int, Note] | None = None
+        self._drag: dict | None = None
+        self._undo_stack: list[tuple] = []
+        self._redo_stack: list[tuple] = []
+
         self.horizontalScrollBar().valueChanged.connect(lambda _: self.viewport().update())
         self.verticalScrollBar().valueChanged.connect(lambda _: self.viewport().update())
 
@@ -52,6 +63,10 @@ class PianoRoll(QAbstractScrollArea):
         self._transcription = transcription
         self._active_track = None
         self._position = 0.0
+        self._selection = None
+        self._drag = None
+        self._undo_stack.clear()
+        self._redo_stack.clear()
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._edit_scale(100.0, keep_time=self._time_at(KEY_W))
         self._update_scrollbars()
@@ -68,6 +83,10 @@ class PianoRoll(QAbstractScrollArea):
         self._transcription = None
         self._active_track = None
         self._position = 0.0
+        self._selection = None
+        self._drag = None
+        self._undo_stack.clear()
+        self._redo_stack.clear()
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.horizontalScrollBar().setValue(0)
         self._update_scrollbars()
@@ -85,7 +104,7 @@ class PianoRoll(QAbstractScrollArea):
         self.viewport().update()
 
     def set_active_track(self, index: int | None) -> None:
-        self._active_track = index
+        self._active_track = index if index is not None and index >= 0 else None
         self.viewport().update()
 
     def zoom_in(self) -> None:
@@ -148,6 +167,16 @@ class PianoRoll(QAbstractScrollArea):
 
     def keyPressEvent(self, event):
         key = event.key()
+        mods = event.modifiers()
+        if key == Qt.Key_Z and mods & Qt.ControlModifier:
+            self.redo() if mods & Qt.ShiftModifier else self.undo()
+            return
+        if key == Qt.Key_Y and mods & Qt.ControlModifier:
+            self.redo()
+            return
+        if key in (Qt.Key_Delete, Qt.Key_Backspace):
+            self._delete_selection()
+            return
         if key == Qt.Key_Space:
             self.playToggleRequested.emit()
             return
@@ -167,24 +196,50 @@ class PianoRoll(QAbstractScrollArea):
         if obj is not self.viewport():
             return super().eventFilter(obj, event)
         etype = event.type()
-        if etype in (QEvent.MouseButtonPress, QEvent.MouseMove, QEvent.MouseButtonRelease, QEvent.Wheel):
-            if etype == QEvent.Wheel:
-                return self._handle_wheel(event)
-            if etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-                pos = event.position()
-                if pos.y() <= RULER_H and pos.x() > KEY_W:
-                    self._seeking = True
-                    self.seekRequested.emit(max(0.0, self._time_at(pos.x())))
-                    return True
-                if pos.y() > RULER_H:
-                    self.setFocus()
-            elif etype == QEvent.MouseMove and self._seeking:
-                self.seekRequested.emit(max(0.0, self._time_at(event.position().x())))
+        if etype == QEvent.Wheel:
+            return self._handle_wheel(event)
+        if etype not in (
+            QEvent.MouseButtonPress,
+            QEvent.MouseButtonDblClick,
+            QEvent.MouseMove,
+            QEvent.MouseButtonRelease,
+        ):
+            return super().eventFilter(obj, event)
+
+        pos = event.position()
+        if etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            if pos.y() <= RULER_H and pos.x() > KEY_W:
+                self._seeking = True
+                self.seekRequested.emit(max(0.0, self._time_at(pos.x())))
                 return True
-            elif etype == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
-                if self._seeking:
-                    self._seeking = False
-                    return True
+            if pos.y() > RULER_H:
+                self.setFocus()
+                self._begin_press(pos)
+                return True
+        elif etype == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+            if self._transcription is not None and pos.y() > RULER_H:
+                hit = self._hit_test(pos)
+                if hit is not None:
+                    self._delete_note(hit[0], hit[1])
+                else:
+                    self._add_note(pos)
+                return True
+        elif etype == QEvent.MouseMove:
+            if self._seeking:
+                self.seekRequested.emit(max(0.0, self._time_at(pos.x())))
+                return True
+            if self._drag is not None:
+                self._drag_to(pos)
+                return True
+            if self._transcription is not None and pos.y() > RULER_H:
+                self._update_hover_cursor(pos)
+        elif etype == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+            if self._seeking:
+                self._seeking = False
+                return True
+            if self._drag is not None:
+                self._end_drag()
+                return True
         return super().eventFilter(obj, event)
 
     def _handle_wheel(self, event) -> bool:
@@ -199,6 +254,193 @@ class PianoRoll(QAbstractScrollArea):
             hbar.setValue(hbar.value() - delta)
             return True
         return False
+
+    # -------------------------------------------------------------- editing
+    def undo(self) -> None:
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(self._snapshot())
+        self._restore(self._undo_stack.pop())
+
+    def redo(self) -> None:
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(self._snapshot())
+        self._restore(self._redo_stack.pop())
+
+    def _snapshot(self) -> tuple:
+        if self._transcription is None:
+            return ()
+        return tuple(
+            tuple((n.pitch, n.start, n.end, n.velocity) for n in track.notes)
+            for track in self._transcription.tracks
+        )
+
+    def _restore(self, snapshot: tuple) -> None:
+        if self._transcription is None:
+            return
+        for track, notes in zip(self._transcription.tracks, snapshot):
+            track.notes[:] = [Note(pitch, start, end, velocity) for pitch, start, end, velocity in notes]
+        self._selection = None
+        self._drag = None
+        self.viewport().unsetCursor()
+        self._notify_notes_changed()
+
+    def _push_undo(self, snapshot: tuple) -> None:
+        self._undo_stack.append(snapshot)
+        if len(self._undo_stack) > 80:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+
+    def _audible_indexes(self) -> list[int]:
+        if self._transcription is None:
+            return []
+        audible = {id(track) for track in self._transcription.audible_tracks()}
+        return [i for i, track in enumerate(self._transcription.tracks) if id(track) in audible]
+
+    def _target_track_index(self) -> int | None:
+        indexes = self._audible_indexes()
+        if not indexes:
+            return None
+        if self._active_track in indexes:
+            return self._active_track
+        return indexes[0]
+
+    def _note_rect(self, note: Note) -> QRectF:
+        top_y = RULER_H - self.verticalScrollBar().value()
+        x = KEY_W + note.start * self._pps - self.horizontalScrollBar().value()
+        width = max(2.5, (note.end - note.start) * self._pps)
+        y = top_y + (127 - note.pitch) * self._note_h
+        return QRectF(x, y + 0.5, width, max(2.0, self._note_h - 1.5))
+
+    def _hit_test(self, pos) -> tuple[int, Note, QRectF] | None:
+        if self._transcription is None:
+            return None
+        for index in reversed(self._audible_indexes()):
+            for note in reversed(self._transcription.tracks[index].notes):
+                rect = self._note_rect(note)
+                if rect.adjusted(-1.0, -0.5, 1.0, 0.5).contains(pos):
+                    return index, note, rect
+        return None
+
+    def _pitch_at(self, y: float) -> int:
+        top_y = RULER_H - self.verticalScrollBar().value()
+        row = int(math.floor((y - top_y) / max(1, self._note_h)))
+        return max(0, min(127, 127 - row))
+
+    @staticmethod
+    def _snap_time(value: float) -> float:
+        return round(value / SNAP) * SNAP
+
+    def _begin_press(self, pos) -> bool:
+        hit = self._hit_test(pos)
+        if hit is None:
+            self._selection = None
+            self.viewport().update()
+            return False
+        index, note, rect = hit
+        self._selection = (index, note)
+        self._active_track = index
+        self.activeTrackChanged.emit(index)
+        resizing = pos.x() >= rect.right() - EDGE_PX
+        self._drag = {
+            "index": index,
+            "note": note,
+            "mode": "resize" if resizing else "move",
+            "press_time": self._time_at(pos.x()),
+            "press_y": pos.y(),
+            "orig": (note.pitch, note.start, note.end),
+            "snapshot": self._snapshot(),
+            "changed": False,
+        }
+        self.viewport().setCursor(Qt.SizeHorCursor if resizing else Qt.ClosedHandCursor)
+        self.viewport().update()
+        return True
+
+    def _drag_to(self, pos) -> None:
+        drag = self._drag
+        if drag is None or self._transcription is None:
+            return
+        index = drag["index"]
+        if not 0 <= index < len(self._transcription.tracks):
+            self._drag = None
+            return
+        track = self._transcription.tracks[index]
+        note = drag["note"]
+        if not any(n is note for n in track.notes):
+            self._drag = None
+            return
+
+        delta = self._time_at(pos.x()) - drag["press_time"]
+        pitch0, start0, end0 = drag["orig"]
+        if drag["mode"] == "move":
+            start = max(0.0, self._snap_time(start0 + delta))
+            note.start = start
+            note.end = start + (end0 - start0)
+            step = int(round((drag["press_y"] - pos.y()) / max(1, self._note_h)))
+            note.pitch = max(0, min(127, pitch0 + step))
+        else:
+            note.end = max(start0 + MIN_NOTE_LEN, self._snap_time(end0 + delta))
+        drag["changed"] = (note.pitch, note.start, note.end) != drag["orig"]
+        self.viewport().update()
+
+    def _end_drag(self) -> None:
+        drag = self._drag
+        self._drag = None
+        self.viewport().unsetCursor()
+        if drag is not None and drag["changed"]:
+            self._push_undo(drag["snapshot"])
+            self._notify_notes_changed()
+        else:
+            self.viewport().update()
+
+    def _update_hover_cursor(self, pos) -> None:
+        hit = self._hit_test(pos)
+        if hit is None:
+            self.viewport().setCursor(Qt.ArrowCursor)
+        elif pos.x() >= hit[2].right() - EDGE_PX:
+            self.viewport().setCursor(Qt.SizeHorCursor)
+        else:
+            self.viewport().setCursor(Qt.OpenHandCursor)
+
+    def _add_note(self, pos) -> None:
+        index = self._target_track_index()
+        if index is None or self._transcription is None:
+            return
+        start = max(0.0, self._snap_time(self._time_at(pos.x())))
+        pitch = self._pitch_at(pos.y())
+        self._push_undo(self._snapshot())
+        note = Note(pitch, start, start + 0.5, 100)
+        self._transcription.tracks[index].notes.append(note)
+        self._selection = (index, note)
+        self._active_track = index
+        self.activeTrackChanged.emit(index)
+        self._notify_notes_changed()
+
+    def _delete_note(self, index: int, note: Note) -> None:
+        if self._transcription is None or not 0 <= index < len(self._transcription.tracks):
+            return
+        track = self._transcription.tracks[index]
+        if not any(n is note for n in track.notes):
+            return
+        self._push_undo(self._snapshot())
+        track.notes[:] = [n for n in track.notes if n is not note]
+        self._selection = None
+        self._drag = None
+        self.viewport().unsetCursor()
+        self._notify_notes_changed()
+
+    def _delete_selection(self) -> None:
+        if self._selection is not None:
+            self._delete_note(*self._selection)
+
+    def _notify_notes_changed(self) -> None:
+        if self._transcription is not None:
+            end = max((n.end for track in self._transcription.tracks for n in track.notes), default=0.0)
+            self._transcription.duration = max(self._transcription.duration, end)
+        self._update_scrollbars()
+        self.viewport().update()
+        self.notesEdited.emit()
 
     # ------------------------------------------------------------- painting
     def paintEvent(self, event):
@@ -321,6 +563,11 @@ class PianoRoll(QAbstractScrollArea):
             painter.setBrush(color)
             radius = min(3.0, rect.height() / 2)
             painter.drawRoundedRect(rect, radius, radius)
+            if self._selection is not None and self._selection[0] == index and self._selection[1] is note:
+                painter.setBrush(Qt.NoBrush)
+                painter.setPen(QPen(QColor("#eaf1ff"), 1.4))
+                painter.drawRoundedRect(rect.adjusted(0.2, 0.2, -0.2, -0.2), radius, radius)
+                painter.setPen(Qt.NoPen)
         painter.setBrush(Qt.NoBrush)
 
     def _draw_playhead(self, painter, view, pps, hscroll):

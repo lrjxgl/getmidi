@@ -129,6 +129,8 @@ class PianoPage(QWidget):
         self.track_panel.selected.connect(self.roll.set_active_track)
         self.roll.seekRequested.connect(self._seek)
         self.roll.playToggleRequested.connect(self._toggle_play)
+        self.roll.notesEdited.connect(self._on_notes_edited)
+        self.roll.activeTrackChanged.connect(self.track_panel.set_active)
 
         shortcut = QShortcut(QKeySequence(Qt.Key_Space), self)
         shortcut.setContext(Qt.WidgetWithChildrenShortcut)
@@ -347,3 +349,10 @@ class PianoPage(QWidget):
         self._rendered_sig = None
         self.status_label.setText("音轨已更新，播放时将重新合成")
         self.roll.viewport().update()
+
+    def _on_notes_edited(self) -> None:
+        self._player.stop()
+        self._rendered_sig = None
+        self.status_label.setText("音符已修改，播放时将重新合成")
+        self._update_time_label()
+        self.contentChanged.emit(True)

@@ -175,7 +175,7 @@ class TrackPanel(QWidget):
         self._scroll.setWidget(self._container)
         layout.addWidget(self._scroll, 1)
 
-        self._hint = QLabel("M 静音 · S 独奏")
+        self._hint = QLabel("M 静音 · S 独奏 · 双击空处加音符")
         self._hint.setObjectName("Hint")
         self._hint.setStyleSheet("font-size: 11px;")
         layout.addWidget(self._hint)
@@ -206,6 +206,11 @@ class TrackPanel(QWidget):
         self._hint.setVisible(bool(tracks))
         self._empty.setVisible(not tracks)
         self._scroll.setVisible(bool(tracks))
+
+    def set_active(self, index: int) -> None:
+        self._active = index if index is not None and index >= 0 else None
+        for row_index, row in enumerate(self._rows):
+            row.set_active(row_index == self._active)
 
     def _on_mute(self, index: int, checked: bool) -> None:
         self._tracks[index].muted = checked
