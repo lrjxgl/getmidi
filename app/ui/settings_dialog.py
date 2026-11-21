@@ -80,7 +80,7 @@ class SettingsDialog(QDialog):
 
         audio_hint = QLabel(
             "播放时用内置合成器把 MIDI 渲染为音频，无需安装 fluidsynth。"
-            "默认音色库为 models/GeneralUser-GS.sf2，也可换成任意 .sf2 / .sf3 文件。"
+            "默认音色库为 soundfont/GeneralUser-GS.sf2，也可换成任意 .sf2 / .sf3 文件。"
         )
         audio_hint.setObjectName("Hint")
         audio_hint.setWordWrap(True)

@@ -49,7 +49,8 @@ conda run -n py310 python -m app.main
 2. **选择模型与设备**：打开「设置 → 转录」，模型可选 Dettato 或 MuScriptor Small / Medium / Large，设备可选自动 / GPU / CPU
 3. **转录**：导入后自动开始，进度窗口中可查看日志并取消
 4. **调整**：左侧音轨卡片切换 M / S、拖动音量；钢琴卷支持缩放与跳转
-5. **导出**：顶部「导出 ▾」菜单选择 MIDI、WAV 或 ZIP
+5. **编辑音符**：拖动音符可移动音高与时间（吸附 1/16 拍），拖动右边缘改长度，双击空白处新增音符，双击音符或按 `Delete` 删除；`Ctrl+Z` / `Ctrl+Y` 撤销重做
+6. **导出**：顶部「导出 ▾」菜单选择 MIDI、WAV 或 ZIP
 
 ### 快捷键
 
@@ -59,6 +60,8 @@ conda run -n py310 python -m app.main
 | `Space` | 播放 / 暂停 |
 | `Ctrl + 滚轮`、`+` / `-` | 钢琴卷缩放 |
 | `Shift + 滚轮` | 横向滚动 |
+| `Delete` | 删除选中音符 |
+| `Ctrl + Z` / `Ctrl + Y` | 撤销 / 重做 |
 
 ### 导出内容
 
@@ -88,7 +91,7 @@ set HF_TOKEN=hf_xxx
 
 ## 音色库与播放
 
-- 默认音色库：`models/GeneralUser-GS.sf2`
+- 默认音色库：`soundfont/GeneralUser-GS.sf2`
 - 可在「设置 → 音频」中更换为任意 `.sf2` / `.sf3` 文件
 - 合成器内置于程序（tinysoundfont），无需安装 fluidsynth；未找到音色库时会在导出 / 播放时给出提示
 
@@ -127,7 +130,7 @@ getmidi/
 在设置中把设备改为 CPU 可避免显存不足；追求速度则选择 GPU，并确认已安装 CUDA 版 PyTorch。
 
 **播放没有声音**
-确认 `models/GeneralUser-GS.sf2` 存在，或在设置中指向其他 `.sf2` / `.sf3` 文件；检查系统音量与音频输出设备。
+确认 `soundfont/GeneralUser-GS.sf2` 存在，或在设置中指向其他 `.sf2` / `.sf3` 文件；检查系统音量与音频输出设备。
 
 ## 说明
 

@@ -8,7 +8,8 @@ from PySide6.QtCore import QSettings
 
 ROOT = Path(__file__).resolve().parent.parent
 MODELS_DIR = ROOT / "models"
-DEFAULT_SF2 = MODELS_DIR / "GeneralUser-GS.sf2"
+SOUNDFONT_DIR = ROOT / "soundfont"
+DEFAULT_SF2 = SOUNDFONT_DIR / "GeneralUser-GS.sf2"
 
 DETTATO_DIR = MODELS_DIR / "dettato_weights"
 DETTATO_WEIGHTS = {
